@@ -22,6 +22,8 @@ import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
 class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with AsyncAssertions with Logging {
 
   final val AllThreeTimeSpans = Set(TIME_SPAN_ALL_TIME, TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)
+  final val DailyAndWeeklyTimeSpans = Set(TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)
+  final val DailyTimeSpan = Set(TIME_SPAN_DAILY)
 
   implicit def intTimes(i: Int) = new {
     def times(fn: => Unit) = (1 to i) foreach (x => fn)
@@ -234,7 +236,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.previousScoreDaily shouldBe initialScore
   }
 
-  test("Updating a score of a time span only to a value that is only better after a reset, updates the same and more narrow time span scores") {
+  test("Updating a score to a value that is only better in case of a time span reset, updates the score of that time span and also of more narrow time spans") {
     val gp = mkGameProgress_LB(null, Ok, false)
     val allTimeBestScore = Some(2000)
     val dailyBestScore = Some(1500)
@@ -245,7 +247,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.updateScore(allTimeBestScore.get)
 
     // Same day, so no update of best weekly and daily score.
-    gp.updateScore(dailyBestScore.get)
+    gp.updateScore(dailyBestScore.get) shouldBe empty
     gp.scoreAllTime shouldBe allTimeBestScore
     gp.scoreWeekly shouldBe allTimeBestScore
     gp.scoreDaily shouldBe allTimeBestScore
@@ -253,7 +255,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     // The daily score, initially set to the same value as the all-time score, is now more than a day old. The all-time
     // best score does no longer count as best of the day, it still stands as best of the week though.
     gp.updateTimestampModified(ScoreDaily, dt.minusHours(25).getMillis)
-    gp.updateScore(dailyBestScore.get)
+    gp.updateScore(dailyBestScore.get) shouldBe DailyTimeSpan
     gp.scoreAllTime shouldBe allTimeBestScore
     gp.scoreWeekly shouldBe allTimeBestScore
     gp.scoreDaily shouldBe dailyBestScore
@@ -265,15 +267,15 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     // Same day, so no change in best weekly score because it is still set to a better value. But the daily score should
     // be updated to the better score.
-    gp.updateScore(weeklyBestScore.get)
+    gp.updateScore(weeklyBestScore.get) shouldBe DailyTimeSpan
     gp.scoreAllTime shouldBe allTimeBestScore
     gp.scoreWeekly shouldBe allTimeBestScore
     gp.scoreDaily shouldBe weeklyBestScore
 
-    // The weekly score was set in the previous week, so the all-time best value does not count as best of the week any longer and
-    // should therefore be updated to the worse new score.
+    // The weekly score was set in the previous week, so the all-time best value does not count as best of the week any
+    // longer and should therefore be updated to the worse new score.
     gp.updateTimestampModified(ScoreWeekly, dt.minusDays(8).getMillis)
-    gp.updateScore(weeklyBestScore.get)
+    gp.updateScore(weeklyBestScore.get) shouldBe DailyAndWeeklyTimeSpans
     gp.scoreAllTime shouldBe allTimeBestScore
     gp.scoreWeekly shouldBe weeklyBestScore
     gp.scoreDaily shouldBe weeklyBestScore
@@ -283,9 +285,9 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     gp.updateTimestampModified(ScoreWeekly, dt.getMillis)
 
-    // Update the daily score to a score that is lower than the weekly score it is in.
+    // Update the daily score to a score that is worse than the best score of that week.
     gp.updateTimestampModified(ScoreDaily, dt.minusHours(25).getMillis)
-    gp.updateScore(weeklyBestScore.get - 10)
+    gp.updateScore(weeklyBestScore.get - 10) shouldBe DailyTimeSpan
     gp.scoreDaily shouldBe Some(weeklyBestScore.get - 10)
   }
 
