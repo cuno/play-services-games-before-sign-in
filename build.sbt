@@ -13,7 +13,7 @@ publishMavenStyle := true
 
 resolvers += Resolver.mavenLocal
 
-javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
+javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 
 platformTarget in Android := "android-21"
 
