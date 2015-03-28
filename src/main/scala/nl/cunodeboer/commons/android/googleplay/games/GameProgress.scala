@@ -1,5 +1,7 @@
 package nl.cunodeboer.commons.android.googleplay.games
 
+import java.util.concurrent.{TimeUnit, CountDownLatch}
+
 import com.google.android.gms.common.api.{GoogleApiClient, ResultCallback}
 import com.google.android.gms.games.Games
 import com.google.android.gms.games.GamesStatusCodes.{STATUS_ACHIEVEMENT_UNLOCKED, STATUS_OK}
@@ -48,7 +50,8 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
   The stats that are kept.
    */
   private var _timestampModified: Map[GooglePlayGamesProperty.Value, Long] = Map.empty
-  private var _timestampSubmitted: Map[GooglePlayGamesProperty.Value, Long] = Map.empty
+  // Not used concurrently
+  private val _timestampSubmitted: TrieMap[GooglePlayGamesProperty.Value, Long] = new TrieMap[GooglePlayGamesProperty.Value, Long]
   private var _gamesWonCount = 0
   private var _gamesDrawnCount = 0
   private var _gamesLostCount = 0
@@ -123,15 +126,15 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       _previousScoreDaily = (json \ FieldPreviousScoreDaily).asOpt[Long]
       _previousScoreWeekly = (json \ FieldPreviousScoreWeekly).asOpt[Long]
       (json \ FieldAchievementsUnlocked).asOpt[Set[String]] match {
-        case Some(set) => for (valueAndKey <- set) _achievementsUnlocked.put(valueAndKey, valueAndKey)
+        case Some(set) => for (valueAndKey <- set) _achievementsUnlocked += (valueAndKey -> valueAndKey)
         case None =>
       }
       (json \ FieldAchievementsUnlockedRemote).asOpt[Set[String]] match {
-        case Some(set) => for (valueAndKey <- set) _achievementsUnlockedRemote.put(valueAndKey, valueAndKey)
+        case Some(set) => for (valueAndKey <- set) _achievementsUnlockedRemote += (valueAndKey -> valueAndKey)
         case None =>
       }
       (json \ FieldIncrementalAchievementsAddToRemote).asOpt[Map[String, Int]] match {
-        case Some(map) => for ((key, value) <- map) _incrementalAchievementsAddToRemote.put(key, value)
+        case Some(map) => for ((key, value) <- map) _incrementalAchievementsAddToRemote += (key -> value)
         case None =>
       }
       _gamesDrawnCount = (json \ FieldGamesDrawnCount).asOpt[Int].getOrElse(0)
@@ -207,7 +210,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
     _gamesLostCount = 0
     _gamesWonCount = 0
     _timestampModified = Map.empty
-    _timestampSubmitted = Map.empty
+    _timestampSubmitted.clear()
   }
 
   /**
@@ -256,7 +259,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    */
   protected[commons] def updatetimestampSubmitted(property: GooglePlayGamesProperty.Value, timestamp: Long) {
     _timestampSubmitted += (property -> timestamp)
-    debug(s"Updated timestamp for synced up of $property")
+    debug(s"Updated timestamp for submitting of $property")
   }
 
   /**
@@ -267,7 +270,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
 
   /**
    * For testing purposes.
-   * @return the submitted timestamp
+   * @return the map containing submit timestamp
    */
   protected[commons] def timestampSubmitted = _timestampSubmitted
 
@@ -500,8 +503,8 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       debug(s"Not incrementing unlocked achievement '$achievementId'")
     } else {
       _incrementalAchievementsAddToRemote.get(achievementId) match {
-        case Some(count) => _incrementalAchievementsAddToRemote.replace(achievementId, count + addition)
-        case None => _incrementalAchievementsAddToRemote.put(achievementId, addition)
+        case Some(count) => _incrementalAchievementsAddToRemote += (achievementId -> (count + addition))
+        case None => _incrementalAchievementsAddToRemote += (achievementId -> addition)
       }
       updateTimestampModified(IncAchs)
     }
@@ -517,8 +520,9 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
 
   /**
    * Retrieves remote score and submits a score to Google Play Games Services if the local score is better.
+   * @return true when no errors occurred, otherwise false
    */
-  def syncScore() {
+  def syncScore() = {
     syncScoreDown {
       syncScoreUp()
     }
@@ -540,66 +544,102 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
 
   /**
    * Asynchronously checks the currently signed in player's remote score, looking in both the public and social leaderboard.
-   * Then, in the callback method, updates the local score if the remote score is better and finally runs the doAfter code block.
+   * Then, in the callback method, updates the local score if the remote score is better and finally runs the onFinished code block.
    */
   def syncScoreDown() {
     syncScoreDown({})
   }
 
   /**
-   * Asynchronously checks the currently signed in player's remote score, looking in both the public and social leaderboard.
-   * Then, in the callback method, updates the local score if the remote score is better and finally runs the doAfter code block.
+   * Asynchronously checks the currently signed in player's remote score, looking in both the public and social leaderboards.
+   * Then, in the callback method, updates the local score if the remote score is better and finally runs the onFinished code block.
    *
-   * @param doAfter code to run after the download succeeded
+   * @param onFinished code to run after loading the score for each time span if it turns out to be worse than
+   *                   the current local score. Does not run when a timeout occurred.
+   * @return true when no errors occurred, otherwise false
    */
-  private def syncScoreDown(doAfter: => Unit) {
-    def handleRemoteScore(leaderboardScore: LeaderboardScore) {
+  private def syncScoreDown(onFinished: => Unit) = {
+    val totalCallbackCount = 6
+    val countDownLatch = new CountDownLatch(totalCallbackCount)
+
+    def handleRemoteScore(leaderboardScore: LeaderboardScore, timeSpan: Int) {
       val remoteScore = leaderboardScore.getRawScore
-      if (remoteScore isBetterThen _scoreAllTime) {
-        updatetimestampsSubmitted(ScoreAllTime) // We know local isn't better, so don't sync up
-        _scoreAllTime = Some(remoteScore)
-        debug(s"Found better remote score: $remoteScore, local score is now ${_scoreAllTime}")
+      def updateHelper(property: GooglePlayGamesProperty.Property, localScore: Option[Long])(whenBetter: => Unit) = {
+        if (remoteScore isBetterThen localScore) {
+          updatetimestampsSubmitted(property) // We know remote is better, so don't sync up
+          debug(s"Found better remote $property of $remoteScore")
+          whenBetter
+        } else {
+          debug(s"Found worse remote $property of $remoteScore")
+        }
       }
-      doAfter
-    }
-    // Load player's best score.
-    leaderBoardId match {
-      case Some(lbId) =>
-        // Try Public collection.
-        _leaderboardsApi.loadCurrentPlayerLeaderboardScore(googleApiClient, lbId, TIME_SPAN_ALL_TIME, COLLECTION_PUBLIC).setResultCallback(new ResultCallback[LoadPlayerScoreResult] {
-          override def onResult(res: LoadPlayerScoreResult) {
-            res.getStatus.getStatusCode match {
-              case STATUS_OK =>
-                val leaderboardScore = res.getScore
-                if (leaderboardScore == null) {
-                  debug("Found no public leaderboard score, now trying social leaderboard")
-                  // Try social collection.
-                  _leaderboardsApi.loadCurrentPlayerLeaderboardScore(googleApiClient, lbId, TIME_SPAN_ALL_TIME, COLLECTION_SOCIAL).setResultCallback(new ResultCallback[LoadPlayerScoreResult] {
-                    override def onResult(res: LoadPlayerScoreResult) {
-                      res.getStatus.getStatusCode match {
-                        case STATUS_OK =>
-                          val leaderboardScore = res.getScore
-                          if (leaderboardScore == null) {
-                            debug(s"Found no public or social leaderboard score")
-                          } else {
-                            handleRemoteScore(leaderboardScore)
-                          }
-                        case _ =>
-                          debug(s"Received status code ${res.getStatus.getStatusCode} when trying to get score from social leaderboard")
-                      }
-                    }
-                  })
-                } else {
-                  handleRemoteScore(leaderboardScore)
-                }
-              case _ =>
-                debug(s"Received status code ${res.getStatus.getStatusCode} when trying to get score from public leaderboard")
-            }
-          }
-        })
-      case None => // No leaderboard so nothing to do
+      timeSpan match {
+        case TIME_SPAN_ALL_TIME => updateHelper(ScoreAllTime, _scoreAllTime) {
+          _scoreAllTime = Some(remoteScore)
+          debug(s"Local $ScoreAllTime is now ${_scoreAllTime}")
+        }
+        case TIME_SPAN_WEEKLY => updateHelper(ScoreWeekly, _scoreWeekly) {
+          _scoreWeekly = Some(remoteScore)
+          debug(s"Local $ScoreWeekly is now ${_scoreWeekly}")
+        }
+        case TIME_SPAN_DAILY => updateHelper(ScoreDaily, _scoreDaily) {
+          _scoreDaily = Some(remoteScore)
+          debug(s"Local $ScoreDaily is now ${_scoreDaily}")
+        }
+      }
     }
 
+    // Load player's best score for each time span.
+    for (timeSpan: Int <- List(TIME_SPAN_ALL_TIME, TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)) {
+      leaderBoardId match {
+        case Some(lbId) =>
+          // Try Public collection.
+          debug(s"Trying public collection\n*Calling loadCurrentPlayerLeaderboardScore(_,$lbId,$timeSpan,$COLLECTION_PUBLIC)*")
+          _leaderboardsApi.loadCurrentPlayerLeaderboardScore(googleApiClient, lbId, timeSpan, COLLECTION_PUBLIC).setResultCallback(new ResultCallback[LoadPlayerScoreResult] {
+            override def onResult(res: LoadPlayerScoreResult) {
+              res.getStatus.getStatusCode match {
+                case STATUS_OK =>
+                  val leaderboardScore = res.getScore
+                  if (leaderboardScore == null) {
+                    // Try social collection.
+                    debug(s"Found no public leaderboard score, now trying social collection\n*Calling loadCurrentPlayerLeaderboardScore(_,$lbId,$timeSpan,$COLLECTION_SOCIAL)*")
+                    _leaderboardsApi.loadCurrentPlayerLeaderboardScore(googleApiClient, lbId, timeSpan, COLLECTION_SOCIAL).setResultCallback(new ResultCallback[LoadPlayerScoreResult] {
+                      override def onResult(res: LoadPlayerScoreResult) {
+                        res.getStatus.getStatusCode match {
+                          case STATUS_OK =>
+                            val leaderboardScore = res.getScore
+                            if (leaderboardScore == null) {
+                              debug(s"Found no public or social leaderboard score")
+                            } else {
+                              handleRemoteScore(leaderboardScore, timeSpan)
+                            }
+                          case _ =>
+                            debug(s"Received status code ${res.getStatus.getStatusCode} when trying to get score from social leaderboard")
+                        }
+                        countDownLatch.countDown()
+                      }
+                    })
+                  } else {
+                    handleRemoteScore(leaderboardScore, timeSpan)
+                    countDownLatch.countDown()
+                  }
+                case _ =>
+                  debug(s"Received status code ${res.getStatus.getStatusCode} when trying to get score from public leaderboard")
+              }
+              countDownLatch.countDown()
+            }
+
+          })
+        case None => // No leaderboard so nothing to do
+          for (n <- 1 to totalCallbackCount) countDownLatch.countDown()
+      }
+    }
+
+    // Wait for all threads to finish before calling onFinished.
+    // onFinished should submit the local score, but not calling onFinished when loading timed out.
+    val success = countDownLatch.await(5, TimeUnit.SECONDS)
+    if (success) onFinished
+    success
   }
 
   /**
@@ -629,8 +669,8 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
                     case STATE_HIDDEN | STATE_REVEALED => // Not unlocked
                     case STATE_UNLOCKED => // Unlocked
                       val valueAndKey = a.getAchievementId
-                      _achievementsUnlocked.put(valueAndKey, valueAndKey)
-                      _achievementsUnlockedRemote.put(valueAndKey, valueAndKey)
+                      _achievementsUnlocked += (valueAndKey -> valueAndKey)
+                      _achievementsUnlockedRemote += (valueAndKey -> valueAndKey)
                       debug(s"sync achievements down unlocked achievement with id $valueAndKey")
                   }
               }
@@ -720,7 +760,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
               statusCode match {
                 // Remote unlock confirmed.
                 case STATUS_OK =>
-                  _achievementsUnlockedRemote.put(achievementId, achievementId)
+                  _achievementsUnlockedRemote += (achievementId -> achievementId)
                   updatetimestampsSubmitted(Achs)
                 case _ => // No problem, better luck next time
               }
@@ -770,8 +810,8 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
                 case STATUS_ACHIEVEMENT_UNLOCKED =>
                   // Unlocking remote confirmed.
                   _incrementalAchievementsAddToRemote.remove(achievementId, addition)
-                  _achievementsUnlocked.put(achievementId, achievementId)
-                  _achievementsUnlockedRemote.put(achievementId, achievementId)
+                  _achievementsUnlocked += (achievementId -> achievementId)
+                  _achievementsUnlockedRemote += (achievementId -> achievementId)
                   updatetimestampsSubmitted(IncAchs)
                   debug(s"Added to, and unlocked achievement '$achievementId'")
                 case _ => // No problem, better luck next time

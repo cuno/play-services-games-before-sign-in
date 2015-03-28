@@ -18,6 +18,8 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
     def times(fn: => Unit) = (1 to n) foreach (x => fn)
   }
 
+  import MeasureType._
+
   val gpSerializedValid =
     """{
       |    "timestampModified_Achs": 1425501279343,
@@ -55,7 +57,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
       |}""".stripMargin
 
   test("The clear() method works") {
-    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid))
+    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid))
     gpDeserialized.scoreAllTime should not be empty
     gpDeserialized.scoreDaily should not be empty
     gpDeserialized.scoreWeekly should not be empty
@@ -91,7 +93,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
 
   test("JSON serializing and de-serializing works") {
     val waiter = new org.scalatest.concurrent.AsyncAssertions.Waiter
-    val gpSerialize = mkGameProgress_Ach(waiter, IncrementUnlock, false)
+    val gpSerialize = mkGameProgress_Ach(waiter, IncrementUnlock, HigherIsBetter)
 
     gpSerialize.incAchievement("Achievement E1", 5)
     gpSerialize.incAchievement("Achievement E2", 12)
@@ -119,7 +121,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
 
     val json = gpSerialize.toString
 
-    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(json))
+    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(json))
 
     gpSerialize.scoreAllTime.get should equal(score)
     gpSerialize.previousScoreAllTime.get should equal(previousScore)
@@ -147,7 +149,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
     gpDeserialized.gamesPlayedCount should equal(gpSerialize.gamesPlayedCount)
 
     // JSON de-serializing "{}" results in properties that are an empty collection or 0
-    val gpDeserializedEmptyJson = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some("{}"))
+    val gpDeserializedEmptyJson = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some("{}"))
     gpDeserializedEmptyJson.gamesDrawnCount should equal(0)
     gpDeserializedEmptyJson.gamesLostCount should equal(0)
     gpDeserializedEmptyJson.gamesWonCount should equal(0)
@@ -159,7 +161,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
   }
 
   test("A valid game progress JSON file will be validated as such") {
-    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid))
+    val gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid))
 
     // No need no test all properties.
     gpDeserialized.scoreAllTime should not be empty
@@ -175,7 +177,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
   }
 
   test("A invalid game progress JSON file will be validated as such") {
-    var gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("1425501279343", "1425501279344")))
+    var gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("1425501279343", "1425501279344")))
 
     def assertAllEmpty() {
       gpDeserialized.scoreAllTime shouldBe empty
@@ -192,95 +194,95 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("1425501279343", "1425501279345")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("1425501279343", "1425501279345")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("12345", "12346")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("12345", "12346")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("1234,", "1235,")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("1234,", "1235,")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("4,", "45,")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("4,", "45,")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"gamesLostCount\": 3", "\"gamesLostCount\": 2")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"gamesLostCount\": 3", "\"gamesLostCount\": 2")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"gamesDrawnCount\": 2", "\"gamesDrawnCount\": 1")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"gamesDrawnCount\": 2", "\"gamesDrawnCount\": 1")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"previousScoreWeekly\": 1234", "\"previousScoreWeekly\": 1234321")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"previousScoreWeekly\": 1234", "\"previousScoreWeekly\": 1234321")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"scoreDaily\": 12345", "\"scoreDai\": 12345")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"scoreDaily\": 12345", "\"scoreDai\": 12345")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("timestampSubmitted_Achs\": 1425501279750", "timestampSubmitted_Achs\": 1425501279751")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("timestampSubmitted_Achs\": 1425501279750", "timestampSubmitted_Achs\": 1425501279751")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreAllTime\": 1425501279345", "\"timestampSubmitted_ScoreAllTime\": 1425510279345")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreAllTime\": 1425501279345", "\"timestampSubmitted_ScoreAllTime\": 1425510279345")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampModified_ScoreAllTime\": 1425501279343", "\"timestampModified_ScoreAllTime\": 142553127934321")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampModified_ScoreAllTime\": 1425501279343", "\"timestampModified_ScoreAllTime\": 142553127934321")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"previousScoreDaily\": 1234", "\"previousScoreDaily\": 154763")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"previousScoreDaily\": 1234", "\"previousScoreDaily\": 154763")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampModified_ScoreWeekly\": 1425501279343", "\"timestampModified_ScoreWeekly\": 142552345676421")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampModified_ScoreWeekly\": 1425501279343", "\"timestampModified_ScoreWeekly\": 142552345676421")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampSubmitted_IncAchs\": 1425501279499", "\"timestampSubmitted_IncAchs\": 142550127948865")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampSubmitted_IncAchs\": 1425501279499", "\"timestampSubmitted_IncAchs\": 142550127948865")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreWeekly\": 1425501279345", "\"timestampSubmitted_ScoreWeekly\": 1425501179354")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreWeekly\": 1425501279345", "\"timestampSubmitted_ScoreWeekly\": 1425501179354")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"scoreAllTime\": 12345", "\"scoreAllTime\": 1232123")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"scoreAllTime\": 12345", "\"scoreAllTime\": 1232123")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampModified_ScoreDaily\": 1425501279343", "\"timestampModified_ScoreDaily\": 4255012793651")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampModified_ScoreDaily\": 1425501279343", "\"timestampModified_ScoreDaily\": 4255012793651")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreDaily\": 1425501279345", "\"timestampSubmitted_ScoreDaily\": 14124124124124")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"timestampSubmitted_ScoreDaily\": 1425501279345", "\"timestampSubmitted_ScoreDaily\": 14124124124124")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"Achievement E2\": 12", "\"Achievement E2\": 11")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"Achievement E2\": 12", "\"Achievement E2\": 11")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("\"Achievement U1\"", "\"Achievement u1\"")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("\"Achievement U1\"", "\"Achievement u1\"")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("Achievement IU1", "Achievement IUx")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("Achievement IU1", "Achievement IUx")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("Achievement U1", "Achievement Ux")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("Achievement U1", "Achievement Ux")))
 
     assertAllEmpty()
 
-    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], true, Some(gpSerializedValid.replace("achievementsUnlocked", "achievementsUnlockde")))
+    gpDeserialized = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], LowerIsBetter, Some(gpSerializedValid.replace("achievementsUnlocked", "achievementsUnlockde")))
 
     assertAllEmpty()
   }

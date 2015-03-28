@@ -12,11 +12,13 @@ import com.google.android.gms.games.Player
 import com.google.android.gms.games.achievement.Achievement._
 import com.google.android.gms.games.achievement.Achievements.{LoadAchievementsResult, UpdateAchievementResult}
 import com.google.android.gms.games.achievement.{Achievement, AchievementBuffer, Achievements}
+import com.google.android.gms.games.leaderboard.LeaderboardVariant._
 import com.google.android.gms.games.leaderboard.Leaderboards.{LoadPlayerScoreResult, SubmitScoreResult}
 import com.google.android.gms.games.leaderboard.{LeaderboardScore, Leaderboards}
 import grizzled.slf4j.Logging
 import org.joda.time.DateTime
-import org.mockito.Matchers._
+import org.mockito.AdditionalMatchers.not
+import org.mockito.Matchers.{eq => is, _}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
@@ -28,13 +30,27 @@ object Globals {
   val MaxCallbackResponseTimeMillis = 500
 }
 
-object AchievementResultType extends Enumeration {
-  type ResultType = Value
-  val Ok, Errors, MissingID, IncrementUnlock = Value
+object Utils {
+  def fakeSubmitted(timeSpan: GooglePlayGamesProperty.Value)(at: Long)(implicit gp: GameProgress) {
+    gp.updateTimestampModified(timeSpan, at - 100)
+    gp.updatetimestampSubmitted(timeSpan, at)
+  }
 }
 
+object AchievementResultType extends Enumeration {
+  type AchievementResultType = Value
+  val StatusOk, StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime, StatusOkThenError_50times, MissingID, IncrementUnlock = Value
+}
+
+object MeasureType extends Enumeration {
+  type MeasureType = Value
+  val LowerIsBetter, HigherIsBetter = Value
+}
+
+import MeasureType._
+
 /** GameProgress with fixed fake local starting time so test outcomes don't depend on when they are run. */
-class TestGameProgressFixedStartDateTime(apiClient: GoogleApiClient, lowerIsBetter: Boolean, initJSON: Option[String] = None, leaderBoardId: Option[String] = None) extends GameProgress(apiClient, lowerIsBetter, initJSON, leaderBoardId) {
+class TestGameProgressFixedStartDateTime(apiClient: GoogleApiClient, measureType: MeasureType, initJSON: Option[String] = None, leaderBoardId: Option[String] = None) extends GameProgress(apiClient, measureType == LowerIsBetter, initJSON, leaderBoardId) {
   override def init() {
     val fakeNowTimeStamp = new DateTime(lbResetTimezone).withYear(2015).withWeekOfWeekyear(10).withDayOfWeek(3).withHourOfDay(12).getMillis
     val realStartTimestamp = System.currentTimeMillis()
@@ -197,8 +213,8 @@ object Helpers extends mock.MockitoSugar with Logging {
    *
    * @return a new TestGameProgress object with mocked members.
    */
-  def mkGameProgress_LB(waiter: Waiter = null, resultType: ResultType = Ok, lowerIsBetter: Boolean = true) = {
-    val statusOk = new com.google.android.gms.common.api.Status(STATUS_OK)
+  def mkGameProgress_LB(waiter: Waiter = null, resultType: AchievementResultType = StatusOk, measureType: MeasureType = LowerIsBetter) = {
+    val apiStatusOk = new com.google.android.gms.common.api.Status(STATUS_OK)
     val statusError = new com.google.android.gms.common.api.Status(STATUS_NETWORK_ERROR_OPERATION_FAILED)
 
     val mockedGoogleApiClient = mock[GoogleApiClient]
@@ -208,10 +224,14 @@ object Helpers extends mock.MockitoSugar with Logging {
     val mockedLeaderboardScore10 = mock[LeaderboardScore]
     when(mockedLeaderboardScore10.getRawScore).thenReturn(10)
 
-    val mockedLoadPlayerScoreResultOk = mock[LoadPlayerScoreResult]
-    // Public leaderboard is tried first and the returned score can be null, in that case the social leaderboard will also be tried.
-    when(mockedLoadPlayerScoreResultOk.getScore).thenReturn(mockedLeaderboardScore10, null, mockedLeaderboardScore10)
-    when(mockedLoadPlayerScoreResultOk.getStatus).thenReturn(statusOk)
+    val mockedLoadPlayerScoreResultOkFirstScoreNullRest10 = mock[LoadPlayerScoreResult]
+    val mockedLoadPlayerScoreResultOkScore10 = mock[LoadPlayerScoreResult]
+
+    when(mockedLoadPlayerScoreResultOkScore10.getStatus).thenReturn(apiStatusOk)
+    when(mockedLoadPlayerScoreResultOkScore10.getScore).thenReturn(mockedLeaderboardScore10)
+
+    when(mockedLoadPlayerScoreResultOkFirstScoreNullRest10.getStatus).thenReturn(apiStatusOk)
+    when(mockedLoadPlayerScoreResultOkFirstScoreNullRest10.getScore).thenReturn(null, mockedLeaderboardScore10)
 
     val mockedLoadPlayerScoreResultError = mock[LoadPlayerScoreResult]
     when(mockedLoadPlayerScoreResultError.getStatus).thenReturn(statusError)
@@ -221,20 +241,25 @@ object Helpers extends mock.MockitoSugar with Logging {
     var gp: GameProgress = null
 
     resultType match {
-      case Ok =>
-        when(mockedSubmitScoreResult.getStatus).thenReturn(statusOk)
-        when(mockedLeaderboardApi.loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), anyInt(), anyInt())).thenReturn(FPR_LB_Load(mockedLoadPlayerScoreResultOk, waiter))
-        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, lowerIsBetter, None, Some("dummyLeaderboardId"))
+      case StatusOk =>
+        when(mockedSubmitScoreResult.getStatus).thenReturn(apiStatusOk)
+        when(mockedLeaderboardApi.loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), anyInt(), anyInt())).thenReturn(FPR_LB_Load(mockedLoadPlayerScoreResultOkScore10, waiter))
+        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, measureType, None, Some("dummyLeaderboardId"))
+        gp.leaderboardsApi = mockedLeaderboardApi
+      case StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime =>
+        when(mockedSubmitScoreResult.getStatus).thenReturn(apiStatusOk)
+        when(mockedLeaderboardApi.loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), anyInt())).thenReturn(FPR_LB_Load(mockedLoadPlayerScoreResultOkFirstScoreNullRest10, waiter))
+        when(mockedLeaderboardApi.loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), not(is(TIME_SPAN_ALL_TIME)), anyInt())).thenReturn(FPR_LB_Load(mockedLoadPlayerScoreResultOkScore10, waiter))
+        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, measureType, None, Some("dummyLeaderboardId"))
         gp.leaderboardsApi = mockedLeaderboardApi
       case MissingID =>
-        when(mockedSubmitScoreResult.getStatus).thenReturn(statusOk)
-        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, lowerIsBetter) // Leaderboard ID is missing
+        when(mockedSubmitScoreResult.getStatus).thenReturn(apiStatusOk)
+        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, measureType) // Leaderboard ID is missing
         gp.leaderboardsApi = mockedLeaderboardApi
-      case Errors =>
-        // Error followed by success
-        when(mockedSubmitScoreResult.getStatus).thenReturn(statusError, statusOk)
+      case StatusOkThenError_50times =>
+        when(mockedSubmitScoreResult.getStatus).thenReturn(statusError, apiStatusOk)
         when(mockedLeaderboardApi.loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), anyInt(), anyInt())).thenReturn(FPR_LB_Load(mockedLoadPlayerScoreResultError, waiter))
-        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, lowerIsBetter, None, Some("dummyLeaderboardId"))
+        gp = new TestGameProgressFixedStartDateTime(mockedGoogleApiClient, measureType, None, Some("dummyLeaderboardId"))
         gp.leaderboardsApi = mockedLeaderboardApi
     }
 
@@ -246,7 +271,7 @@ object Helpers extends mock.MockitoSugar with Logging {
    *
    * @return a new TestGameProgress object with mocked members.
    */
-  def mkGameProgress_Ach(waiter: Waiter = null, resultType: ResultType = Ok, lowerIsBetter: Boolean = true) = {
+  def mkGameProgress_Ach(waiter: Waiter = null, resultType: AchievementResultType = StatusOk, measureType: MeasureType = LowerIsBetter) = {
     val gpWithLeaderBoardApi = mkGameProgress_LB(waiter) // Leaderboard API should behave normal, not testing it here.
 
     val mockedUpdateAchievementResultERROR = mock[UpdateAchievementResult]
@@ -280,9 +305,9 @@ object Helpers extends mock.MockitoSugar with Logging {
     val mockedUpdateAchievementResultIncrementedToUnlocked = mock[UpdateAchievementResult]
     when(mockedUpdateAchievementResultIncrementedToUnlocked.getStatus).thenReturn(new com.google.android.gms.common.api.Status(STATUS_ACHIEVEMENT_UNLOCKED))
 
-    val gp = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], lowerIsBetter, None, Some("dummyLeaderboardId"))
+    val gp = new TestGameProgressFixedStartDateTime(mock[GoogleApiClient], measureType, None, Some("dummyLeaderboardId"))
     resultType match {
-      case Ok =>
+      case StatusOk =>
         val mockedAchievementsApiOK = mock[Achievements]
 
         when(mockedAchievementsApiOK.unlockImmediate(any[GoogleApiClient], anyString())).thenReturn(FPR_Ach(mockedUpdateAchievementResultOK, waiter))
@@ -314,7 +339,7 @@ object Helpers extends mock.MockitoSugar with Logging {
         gp.leaderboardsApi = gpWithLeaderBoardApi.leaderboardsApi
         gp.achievementsApi = mockedAchievementsApiIncToUnlock
         gp
-      case Errors =>
+      case StatusOkThenError_50times =>
         val count = 50
         val pair = List(mockedUpdateAchievementResultOK, mockedUpdateAchievementResultERROR)
         val l = new scala.collection.mutable.MutableList[Achievements.UpdateAchievementResult]

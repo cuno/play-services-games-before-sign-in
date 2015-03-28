@@ -11,13 +11,14 @@ import grizzled.slf4j.Logging
 import nl.cunodeboer.commons.android.googleplay.games.GooglePlayGamesProperty._
 import nl.cunodeboer.commons.android.googleplay.games.Helpers.mkGameProgress_LB
 import org.joda.time.DateTime
-import org.mockito.Matchers._
+import org.mockito.Matchers.{eq => is, _}
 import org.mockito.Mockito._
 import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.concurrent.AsyncAssertions.{Waiter => W}
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.time.SpanSugar._
 import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
+import nl.cunodeboer.commons.android.googleplay.games.Utils.fakeSubmitted
 
 class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with AsyncAssertions with Logging {
 
@@ -29,14 +30,11 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     def times(fn: => Unit) = (1 to i) foreach (x => fn)
   }
 
-  def fakeSubmitted(timeSpan: GooglePlayGamesProperty.Value)(at: Long)(implicit gp: GameProgress) {
-    gp.updateTimestampModified(timeSpan, at - 100)
-    gp.updatetimestampSubmitted(timeSpan, at)
-  }
-
   val MaxCallbackResponseTimeMillis = 500
 
   import nl.cunodeboer.commons.android.googleplay.games.AchievementResultType._
+
+  import MeasureType._
 
   /** Fake PendingResult[Leaderboards.SubmitScoreResult] submit */
   class FakePendingResultSubmitScoreResult(mockedUpdateSubmitScoreResult: Leaderboards.SubmitScoreResult, waiter: W) extends PendingResult[Leaderboards.SubmitScoreResult] {
@@ -106,7 +104,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("isBetterThen method of implicit class ScoreUtils works when higher is better") {
-    val gp_largerBetter = mkGameProgress_LB(null, Ok, false)
+    val gp_largerBetter = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
     import gp_largerBetter.ScoreUtils
 
     1 isBetterThen Some(2) shouldBe false
@@ -141,7 +139,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("updateScore only sets lower values when configured as lower is better") {
-    val gp = mkGameProgress_LB(null, Ok, true)
+    val gp = mkGameProgress_LB(null, StatusOk)
     gp.updateScore(5000) shouldBe AllThreeTimeSpans
     gp.scoreAllTime.get shouldBe 5000
     gp.updateScore(5000) shouldBe empty
@@ -163,7 +161,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("updateScore only sets higher values when configured as higher is better") {
-    val gp = mkGameProgress_LB(null, Ok, false)
+    val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
     gp.updateScore(5000) shouldBe AllThreeTimeSpans
     gp.scoreAllTime shouldBe Some(5000)
     gp.updateScore(5000) shouldBe empty
@@ -185,8 +183,8 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("The previousScore is updated only when score is updated") {
-    val gpL = mkGameProgress_LB(null, Ok, false)
-    val gpS = mkGameProgress_LB(null, Ok, true)
+    val gpL = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
+    val gpS = mkGameProgress_LB(null, StatusOk, LowerIsBetter)
     // Update if higher
     gpL.scoreAllTime shouldBe empty
     gpL.previousScoreAllTime shouldBe empty
@@ -215,7 +213,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Updating to a better score of a wider time span also updates the encompassing scores") {
-    val gp = mkGameProgress_LB(null, Ok, false)
+    val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
     val initialScore = Some(1000)
     val betterScore = Some(2000)
 
@@ -237,7 +235,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Updating a score to a value that is only better in case of a time span reset, updates the score of that time span and also of more narrow time spans") {
-    val gp = mkGameProgress_LB(null, Ok, false)
+    val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
     val allTimeBestScore = Some(2000)
     val dailyBestScore = Some(1500)
     val weeklyBestScore = Some(1750)
@@ -310,7 +308,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
   test("Synchronizing the score up only submits when it's updated later than it was submitted") {
     val waiter = new W
-    val gp = mkGameProgress_LB(waiter, Ok, false)
+    val gp = mkGameProgress_LB(waiter, StatusOk, HigherIsBetter)
     val leaderboardsApiMock = gp.leaderboardsApi
 
     gp.updateScore(1234)
@@ -336,7 +334,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
   test("Failure synchronize the score up can be retried and still succeed") {
     val waiter = new W
-    val gp = mkGameProgress_LB(waiter, Errors)
+    val gp = mkGameProgress_LB(waiter, StatusOkThenError_50times)
     val leaderboardsApiMock = gp.leaderboardsApi
 
     gp.updateScore(1234)
@@ -452,26 +450,50 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import org.mockito.Matchers.{eq => is}
 
     val waiter = new W
-    val gp = mkGameProgress_LB(waiter, Ok)
+    val gp = mkGameProgress_LB(waiter, StatusOk)
 
-    // Set worse local score than remote score of 10.
+    // Set worse local score than remote score of 10 (all three time spans).
     gp.updateScore(123)
 
     // Score found in public leaderboard, no need so look in the social leaderboard.
     gp.syncScore()
     waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
-    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), anyInt(), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
     gp.scoreAllTime shouldBe Some(10)
+  }
 
-    // Score not found in public leaderboard but found in social leaderboard.
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(2))
-    verify(gp.leaderboardsApi, times(2)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
+  test("Bi-directional sync score with worse local score does not submit to remote [score in the social collection]") {
+    import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
+    import org.mockito.Matchers.{eq => is}
+
+    val waiter = new W
+    val gp = mkGameProgress_LB(waiter, StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime)
+
+    // Set worse local score than remote score of 10 (all three time spans).
+    gp.updateScore(123)
+
+    withClue("timeout occurred:") {
+      gp.syncScore() shouldBe true
+    }
+
+    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(4))
+
+    // All three time spans should be tried.
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_PUBLIC))
+
+    // Only in time span all-time should the score be found in the social collection because, on the LoadPlayerScoreResult mock, the first call to getScore only then returns no value.
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+
     gp.scoreAllTime shouldBe Some(10)
+    gp.scoreWeekly shouldBe Some(10)
+    gp.scoreDaily shouldBe Some(10)
   }
 
   test("Bi-directional sync score with better local score submits it to remote") {
@@ -479,39 +501,59 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import org.mockito.Matchers.{eq => is}
 
     val waiter = new W
-    val gp = mkGameProgress_LB(waiter, Ok)
+    val gp = mkGameProgress_LB(waiter, StatusOk)
 
-    // Set better local score than remote score of 10.
+    // Set better local score than remote score of 8 (all three time spans).
     gp.updateScore(8)
 
-    // Score found in public leaderboard, no need so look in the social leaderboard.
+    // Score found in public leaderboard, no need to look in the social leaderboard.
     gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(2))
+    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(4))
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_PUBLIC))
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
     gp.scoreAllTime shouldBe Some(8)
-
-    // Set better local score than remote score of 8.
-    gp.updateScore(7)
-
-    // Score not found in public leaderboard but found in social leaderboard.
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(2))
-    verify(gp.leaderboardsApi, times(2)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
-    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
-    verify(gp.leaderboardsApi, times(2)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
-    gp.scoreAllTime shouldBe Some(7)
   }
 
-  test("Bi-directional sync score with failing sync down does not sync up afterwards.") {
+  test("Bi-directional sync score with better local score submits it to remote [score in the social collection]") {
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
     val waiter = new W
-    val gp = mkGameProgress_LB(waiter, Errors)
+    val gp = mkGameProgress_LB(waiter, StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime)
 
-    // Set better local score than remote score of 10.
+    // Set better local score than remote score of 7 (all three time spans).
+    gp.updateScore(7)
+
+
+    gp.syncScore()
+    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(5))
+
+    // All three time spans should be tried.
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_PUBLIC))
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_PUBLIC))
+
+    // Only in time span all-time should the score be found in the social collection because, on the LoadPlayerScoreResult mock, the first call to getScore only then returns no value.
+    verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_SOCIAL))
+    verify(gp.leaderboardsApi, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    gp.scoreAllTime shouldBe Some(7)
+  }
+
+  test("Bi-directional sync score with failing sync down does not submit to remote afterwards.") {
+    import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
+    import org.mockito.Matchers.{eq => is}
+
+    val waiter = new W
+    val gp = mkGameProgress_LB(waiter, StatusOkThenError_50times)
+
+    // Set better local score than remote score of 10 (all three time spans).
     gp.updateScore(8)
 
     // Score found in public leaderboard, no need so look in the social leaderboard.

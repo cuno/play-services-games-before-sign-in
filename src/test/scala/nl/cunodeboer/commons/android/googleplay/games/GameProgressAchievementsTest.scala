@@ -33,11 +33,6 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
     def times(fn: => Unit) = (1 to i) foreach (x => fn)
   }
 
-  def fakeSubmitted(timeSpan: GooglePlayGamesProperty.Value)(at: Long)(implicit gp: GameProgress) {
-    gp.updateTimestampModified(timeSpan, at - 100)
-    gp.updatetimestampSubmitted(timeSpan, at)
-  }
-
   test("Updated unlocked achievements are submitted and unchanged ones are skipped") {
     val waiter = new Wtr
     val gp = mkGameProgress_Ach(waiter)
@@ -204,7 +199,7 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
   test("When synchronizing 100 achievements of which 50 fail, then the GameProgress object reflects that") {
     val waiter = new Wtr
     val count = 100
-    val gp = mkGameProgress_Ach(waiter, Errors)
+    val gp = mkGameProgress_Ach(waiter, StatusOkThenError_50times)
     val achievementsApiMock = gp.achievementsApi
 
     for (n <- 1 to count) gp.unlockAchievement(s"achievement $n")
