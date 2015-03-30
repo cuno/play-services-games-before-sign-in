@@ -244,7 +244,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     gp.updateScore(allTimeBestScore.get)
 
-    // Same day, so no update of best weekly and daily score.
+    // Same day, so no reset and update of best weekly and daily score.
     gp.updateScore(dailyBestScore.get) shouldBe empty
     gp.scoreAllTime shouldBe allTimeBestScore
     gp.scoreWeekly shouldBe allTimeBestScore
@@ -359,7 +359,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
       gp.timestampModified get property shouldBe empty
       gp.timestampSubmitted get property shouldBe empty
       gp.updateTimestampModified(property, 1234567)
-      gp.updatetimestampSubmitted(property, 7654321)
+      gp.updateTimestampSubmitted(property, 7654321)
       gp.timestampModified get property should be(Some(1234567))
       gp.timestampSubmitted get property should be(Some(7654321))
     }
@@ -379,11 +379,15 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     verify(leaderboardsApiMock, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
   }
 
-  test("Sync up with an already submitted all-time or weekly score do not submit those again") {
+  test("Sync up with an already submitted wider time span score will only submit the next-widest time span's better score") {
     implicit val gp = mkGameProgress_LB()
     val leaderboardsApiMock = gp.leaderboardsApi
 
-    gp.updateScore(1000)
+    val scoreAllTime = 1000L
+    val scoreWeekly = 999L
+    val scoreDaily = 998L
+
+    gp.updateScore(scoreAllTime)
 
     gp.timestampSubmitted get ScoreAllTime shouldBe empty
     gp.timestampSubmitted get ScoreWeekly shouldBe empty
@@ -391,6 +395,8 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     gp.syncUp()
 
+    // All-time score should be submitted.
+    verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreAllTime))
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
     gp.timestampSubmitted get ScoreAllTime should not be empty
     gp.timestampSubmitted get ScoreWeekly should not be empty
@@ -398,20 +404,26 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     val unchangedAllTimeTimestamp = gp.currentTimeMillis()
 
+    // Set better weekly score.
     gp.updateScore(999)
     fakeSubmitted(ScoreAllTime)(unchangedAllTimeTimestamp)
     gp.syncUp()
 
+    // Weekly score should be submitted.
+    verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreWeekly))
     verify(leaderboardsApiMock, times(2)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
     gp.timestampSubmitted get ScoreAllTime shouldBe Some(unchangedAllTimeTimestamp)
 
     val unchangedWeeklyTimestamp = gp.currentTimeMillis()
 
-    gp.updateScore(998)
+    // Set better daily score.
+    gp.updateScore(scoreDaily)
     fakeSubmitted(ScoreAllTime)(unchangedAllTimeTimestamp)
     fakeSubmitted(ScoreWeekly)(unchangedWeeklyTimestamp)
     gp.syncUp()
 
+    // Daily score should be submitted.
+    verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreDaily))
     verify(leaderboardsApiMock, times(3)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
     gp.timestampSubmitted get ScoreAllTime shouldBe Some(unchangedAllTimeTimestamp)
     gp.timestampSubmitted get ScoreWeekly shouldBe Some(unchangedWeeklyTimestamp)

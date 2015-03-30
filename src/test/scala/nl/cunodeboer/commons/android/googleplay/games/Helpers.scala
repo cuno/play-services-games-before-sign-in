@@ -33,7 +33,7 @@ object Globals {
 object Utils {
   def fakeSubmitted(timeSpan: GooglePlayGamesProperty.Value)(at: Long)(implicit gp: GameProgress) {
     gp.updateTimestampModified(timeSpan, at - 100)
-    gp.updatetimestampSubmitted(timeSpan, at)
+    gp.updateTimestampSubmitted(timeSpan, at)
   }
 }
 

@@ -50,7 +50,6 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
   The stats that are kept.
    */
   private var _timestampModified: Map[GooglePlayGamesProperty.Value, Long] = Map.empty
-  // Not used concurrently
   private val _timestampSubmitted: TrieMap[GooglePlayGamesProperty.Value, Long] = new TrieMap[GooglePlayGamesProperty.Value, Long]
   private var _gamesWonCount = 0
   private var _gamesDrawnCount = 0
@@ -216,7 +215,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
   /**
    * Should be called after every local change of a Google Play Property.
    */
-  private def updateTimestampModified(property: GooglePlayGamesProperty.Value) {
+  private def updateTimestampModified(property: GooglePlayGamesProperty.Value): Long = {
     updateTimestampModified(property, currentTimeMillis())
   }
 
@@ -228,17 +227,17 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    *
    * @param property property to set modified timestamp for
    */
-  private def updatetimestampsSubmitted(property: GooglePlayGamesProperty.Value) {
+  private def updateTimestampsSubmitted(property: GooglePlayGamesProperty.Value) = {
     val ts = currentTimeMillis()
-    updatetimestampSubmitted(property, ts)
+    updateTimestampSubmitted(property, ts)
     // Also update encompassing leaderboard score time spans.
     property match {
       case ScoreAllTime =>
-        updatetimestampSubmitted(ScoreWeekly, ts)
-        updatetimestampSubmitted(ScoreDaily, ts)
+        updateTimestampSubmitted(ScoreWeekly, ts)
+        updateTimestampSubmitted(ScoreDaily, ts)
       case ScoreWeekly =>
-        updatetimestampSubmitted(ScoreDaily, ts)
-      case _ =>
+        updateTimestampSubmitted(ScoreDaily, ts)
+      case _ => -1l
     }
   }
 
@@ -247,9 +246,10 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    * @param property property to set modified timestamp for
    * @param timestamp the timestamp in milliseconds
    */
-  protected[commons] def updateTimestampModified(property: GooglePlayGamesProperty.Value, timestamp: Long) {
+  protected[commons] def updateTimestampModified(property: GooglePlayGamesProperty.Value, timestamp: Long) = {
     _timestampModified += (property -> timestamp)
     debug(s"Updated timestamp for modified $property")
+    timestamp
   }
 
   /**
@@ -257,9 +257,10 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    * @param property property to set submitted timestamp for
    * @param timestamp the timestamp in milliseconds
    */
-  protected[commons] def updatetimestampSubmitted(property: GooglePlayGamesProperty.Value, timestamp: Long) {
+  protected[commons] def updateTimestampSubmitted(property: GooglePlayGamesProperty.Value, timestamp: Long) = {
     _timestampSubmitted += (property -> timestamp)
     debug(s"Updated timestamp for submitting of $property")
+    timestamp
   }
 
   /**
@@ -455,6 +456,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    */
   def updateScore(score: Long) = {
     // Reset daily and weekly scores when appropriate, before comparing old and new scores.
+    // If a reset happens the previous score of that time span will be updated.
     resetOldWeeklyScore()
     resetOldDailyScore()
 
@@ -566,7 +568,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       val remoteScore = leaderboardScore.getRawScore
       def updateHelper(property: GooglePlayGamesProperty.Property, localScore: Option[Long])(whenBetter: => Unit) = {
         if (remoteScore isBetterThen localScore) {
-          updatetimestampsSubmitted(property) // We know remote is better, so don't sync up
+          updateTimestampSubmitted(property, updateTimestampModified(property)) // We know remote is better, so don't sync up.
           debug(s"Found better remote $property of $remoteScore")
           whenBetter
         } else {
@@ -709,7 +711,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
                 statusCode match {
                   // Remote score update confirmed.
                   case STATUS_OK =>
-                    updatetimestampsSubmitted(timeSpan)
+                    updateTimestampsSubmitted(timeSpan)
                   case _ => // No problem, better luck next time
                 }
                 res.release()
@@ -717,7 +719,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
             })
           case _ =>
             debug("No score to submit.")
-            updatetimestampsSubmitted(timeSpan)
+            updateTimestampsSubmitted(timeSpan)
         }
       }
       def submitWidestTimeStampScore(score: Option[Long], timeSpan: GooglePlayGamesProperty.Value) {
@@ -727,7 +729,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
           case (Some(_), None) =>
             debug(s"[submitWidestTimeStampScore()] Submitting $timeSpan because it has never been submitted.")
             submitScore(score, timeSpan)
-          case (Some(modified), Some(submitted)) if modified >= submitted =>
+          case (Some(modified), Some(submitted)) if modified > submitted =>
             debug(s"[submitWidestTimeStampScore()] Submitting $timeSpan because it is modified.")
             submitScore(score, timeSpan)
           case _ =>
@@ -748,7 +750,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       // Tests if all local achievements are already submitted.
       var noSubmitAttempts = true
 
-      if (_achievementsUnlocked.isEmpty) updatetimestampsSubmitted(Achs)
+      if (_achievementsUnlocked.isEmpty) updateTimestampsSubmitted(Achs)
       else for (achievementId <- _achievementsUnlocked.keys) {
         // Skip if already done.
         if (!_achievementsUnlockedRemote.contains(achievementId)) {
@@ -761,7 +763,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
                 // Remote unlock confirmed.
                 case STATUS_OK =>
                   _achievementsUnlockedRemote += (achievementId -> achievementId)
-                  updatetimestampsSubmitted(Achs)
+                  updateTimestampsSubmitted(Achs)
                 case _ => // No problem, better luck next time
               }
             }
@@ -770,7 +772,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       }
       if (noSubmitAttempts) {
         debug("No achievements to unlock.")
-        updatetimestampsSubmitted(Achs)
+        updateTimestampsSubmitted(Achs)
       }
     }
     (_timestampModified get Achs, _timestampSubmitted get Achs) match {
@@ -790,7 +792,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       // Tests if all local incremental achievements are already submitted.
       var noIncrementAttempts = true
 
-      if (_incrementalAchievementsAddToRemote.isEmpty) updatetimestampsSubmitted(IncAchs)
+      if (_incrementalAchievementsAddToRemote.isEmpty) updateTimestampsSubmitted(IncAchs)
       else for ((achievementId, addition) <- _incrementalAchievementsAddToRemote) {
         // Unlocked achievemnts can't be incremented and will be ignored.
         if (_achievementsUnlockedRemote.contains(achievementId)) {
@@ -805,14 +807,14 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
                 case STATUS_OK =>
                   // Adding to remote confirmed.
                   _incrementalAchievementsAddToRemote.remove(achievementId)
-                  updatetimestampsSubmitted(IncAchs)
+                  updateTimestampsSubmitted(IncAchs)
                   debug(s"Added to achievement '$achievementId'")
                 case STATUS_ACHIEVEMENT_UNLOCKED =>
                   // Unlocking remote confirmed.
                   _incrementalAchievementsAddToRemote.remove(achievementId, addition)
                   _achievementsUnlocked += (achievementId -> achievementId)
                   _achievementsUnlockedRemote += (achievementId -> achievementId)
-                  updatetimestampsSubmitted(IncAchs)
+                  updateTimestampsSubmitted(IncAchs)
                   debug(s"Added to, and unlocked achievement '$achievementId'")
                 case _ => // No problem, better luck next time
                   debug(s"Error status $statusCode received for submitting achievement '$achievementId'")
@@ -823,7 +825,7 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
       }
       if (noIncrementAttempts) {
         debug("No achievements to increment.")
-        updatetimestampsSubmitted(IncAchs)
+        updateTimestampsSubmitted(IncAchs)
       }
     }
     (_timestampModified get IncAchs, _timestampSubmitted get IncAchs) match {
