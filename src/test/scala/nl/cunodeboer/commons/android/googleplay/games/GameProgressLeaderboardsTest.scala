@@ -2,7 +2,7 @@ package nl.cunodeboer.commons.android.googleplay.games
 
 import java.util.concurrent.TimeUnit
 
-import com.google.android.gms.common.api.PendingResult.a
+import com.google.android.gms.common.api.PendingResult.BatchCallback
 import com.google.android.gms.common.api._
 import com.google.android.gms.games.leaderboard.LeaderboardVariant.{TIME_SPAN_ALL_TIME, TIME_SPAN_DAILY, TIME_SPAN_WEEKLY}
 import com.google.android.gms.games.leaderboard.Leaderboards
@@ -46,7 +46,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     override def isCanceled: Boolean = ???
 
-    override def a(p1: a): Unit = ???
+    override def addBatchCallback(batchCallback: BatchCallback): Unit = ???
 
     override def setResultCallback(resultCallback: ResultCallback[SubmitScoreResult]) = {
       resultCallback.onResult(mockedUpdateSubmitScoreResult)
@@ -71,7 +71,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     override def isCanceled: Boolean = ???
 
-    override def a(p1: a): Unit = ???
+    override def addBatchCallback(batchCallback: BatchCallback): Unit = ???
 
     override def setResultCallback(p1: ResultCallback[LoadPlayerScoreResult], p2: Long, p3: TimeUnit): Unit = ???
 

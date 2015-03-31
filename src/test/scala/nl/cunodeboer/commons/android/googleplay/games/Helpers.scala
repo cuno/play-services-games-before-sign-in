@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit
 import android.database.CharArrayBuffer
 import android.net.Uri
 import android.os.Parcel
-import com.google.android.gms.common.api.PendingResult.a
+import com.google.android.gms.common.api.PendingResult.BatchCallback
 import com.google.android.gms.common.api._
 import com.google.android.gms.games.GamesStatusCodes._
 import com.google.android.gms.games.Player
@@ -68,7 +68,7 @@ class FPR_LB_Submit(mockedUpdateSubmitScoreResult: Leaderboards.SubmitScoreResul
 
   override def isCanceled: Boolean = ???
 
-  override def a(p1: a): Unit = ???
+  override def addBatchCallback(batchCallback: BatchCallback): Unit = ???
 
   override def setResultCallback(resultCallback: ResultCallback[SubmitScoreResult]) = {
     resultCallback.onResult(mockedUpdateSubmitScoreResult)
@@ -93,7 +93,7 @@ class FPR_LB_Load(mockedLoadPlayerScoreResult: Leaderboards.LoadPlayerScoreResul
 
   override def isCanceled: Boolean = ???
 
-  override def a(p1: a): Unit = ???
+  override def addBatchCallback(batchCallback: BatchCallback): Unit = ???
 
   override def setResultCallback(p1: ResultCallback[LoadPlayerScoreResult], p2: Long, p3: TimeUnit): Unit = ???
 
@@ -125,7 +125,7 @@ class FPR_Ach[R <: Result](mockedUpdateAchievementResult: R, waiter: Waiter) ext
 
   override def isCanceled: Boolean = ???
 
-  override def a(p1: a): Unit = ???
+  override def addBatchCallback(batchCallback: BatchCallback): Unit = ???
 
   override def setResultCallback(resultCallback: ResultCallback[R]) = {
     new Thread(new Runnable {

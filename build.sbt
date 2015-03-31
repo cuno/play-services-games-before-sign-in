@@ -25,7 +25,7 @@ android.Plugin.buildAar
 
 libraryDependencies ++= Seq(
   // PROJECT DEPS
-  "com.google.android.gms" % "play-services-games" % "6.5.+",
+  "com.google.android.gms" % "play-services-games" % "7.0.+",
   "com.typesafe.play" %% "play-json" % "2.4.+",
   // LOGGING DEPS
   "org.clapper" %% "grizzled-slf4j" % "1.+",
