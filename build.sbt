@@ -3,7 +3,7 @@ import scala.collection.JavaConversions._
 
 name := "play-services-games-before-sign-in"
 
-version := "1.0.2-RC1"
+version := "1.0.2-SNAPSHOT"
 
 scalaVersion := "2.11.5"
 
