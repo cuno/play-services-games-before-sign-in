@@ -4,13 +4,11 @@ import com.google.android.gms.common.api._
 import com.google.android.gms.games.leaderboard.LeaderboardVariant.{TIME_SPAN_ALL_TIME, TIME_SPAN_DAILY, TIME_SPAN_WEEKLY}
 import grizzled.slf4j.Logging
 import nl.cunodeboer.commons.android.googleplay.games.AchievementResultType._
-import nl.cunodeboer.commons.android.googleplay.games.FPR_Ach.MaxCallbackResponseTimeMillis
+import nl.cunodeboer.commons.android.googleplay.games.Globals.MaxCallbackResponseTimeMillisAwait
 import nl.cunodeboer.commons.android.googleplay.games.Helpers.mkGameProgress_Ach
 import org.joda.time.DateTime
 import org.mockito.Matchers._
 import org.mockito.Mockito._
-import org.scalatest.concurrent.AsyncAssertions
-import org.scalatest.concurrent.AsyncAssertions.{Waiter => Wtr}
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.time.SpanSugar._
 import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
@@ -25,111 +23,124 @@ class TestGameProgress(apiClient: GoogleApiClient, lowerIsBetter: Boolean, initJ
   }
 }
 
-class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with AsyncAssertions with Logging {
+class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with myAsyncAssertions with Logging {
 
   final val AllThreeTimeSpans = Set(TIME_SPAN_ALL_TIME, TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)
 
-  implicit def intTimes(i: Int) = new {
-    def times(fn: => Unit) = (1 to i) foreach (x => fn)
-  }
-
   test("Updated unlocked achievements are submitted and unchanged ones are skipped") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter)
     val achievementsApiMock = gp.achievementsApi
+    val cbd = mock[CallbackDummy]
 
     // No changes yet.
-    gp.syncUp()
+    gp.syncUp(cbd.check())
+
     verify(achievementsApiMock, never).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(1)).check()
 
     gp.unlockAchievement("achievement X")
     gp.unlockAchievement("achievement Y")
     gp.unlockAchievement("achievement Z")
     Thread.sleep(10)
 
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(3))
+    gp.syncUp(cbd.check())
+    await(waiter, 3)
     verify(achievementsApiMock, times(3)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(2)).check()
 
     // No changes.
-    gp.syncUp()
+    gp.syncUp(cbd.check())
     verify(achievementsApiMock, times(3)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(3)).check()
 
     gp.unlockAchievement("achievement Q")
     Thread.sleep(10)
 
     // Another achievement was unlocked.
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+    await(waiter, 1)
     verify(achievementsApiMock, times(4)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(4)).check()
 
     gp.achievementsUnlockedCount shouldBe 4
     gp.achievementsUnlockedRemoteCount shouldBe 4
   }
 
   test("Updated incremental achievements are submitted and unchanged ones are skipped") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter, IncrementUnlock)
     val achievementsApiMock1 = gp.achievementsApi
+    val cbd = mock[CallbackDummy]
+
     val achievement1 = "Achievement 1"
 
     // No changes yet.
-    gp.syncIncrementalAchievementsUp()
+    gp.syncIncrementalAchievementsUp(cbd.check())
     verify(achievementsApiMock1, never).incrementImmediate(any[GoogleApiClient], anyString(), anyInt())
+    verify(cbd, times(1)).check()
 
     gp.incAchievement(achievement1, 1)
     Thread.sleep(10)
 
-    gp.syncIncrementalAchievementsUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncIncrementalAchievementsUp(cbd.check())
+    await(waiter, 1)
     verify(achievementsApiMock1, times(1)).incrementImmediate(any[GoogleApiClient], anyString(), anyInt())
+    verify(cbd, times(2)).check()
 
     // Unchanged incremental achievement.
-    gp.syncIncrementalAchievementsUp()
+    gp.syncIncrementalAchievementsUp(cbd.check())
     verify(achievementsApiMock1, times(1)).incrementImmediate(any[GoogleApiClient], anyString(), anyInt())
+    verify(cbd, times(3)).check()
 
     gp.incAchievement(achievement1, 7)
     Thread.sleep(10)
 
-    gp.syncIncrementalAchievementsUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncIncrementalAchievementsUp(cbd.check())
+    await(waiter, 1)
     verify(achievementsApiMock1, times(2)).incrementImmediate(any[GoogleApiClient], anyString(), anyInt())
+    verify(cbd, times(4)).check()
   }
 
   test("Bi-directional sync of achievements works as expected") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter) // Contains 12 remote achievements
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock = gp.achievementsApi
 
     gp.unlockAchievement("achievement not remote 1")
     gp.unlockAchievement("achievement not remote 2")
     gp.unlockAchievement("achievement not remote 3")
 
-    gp.syncAchievements()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(4))
+    gp.syncAchievements(cbd.check())
+    await(waiter, 4)
     verify(achievementsApiMock, times(1)).load(any[GoogleApiClient], anyBoolean())
     verify(achievementsApiMock, times(3)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(1)).check()
     gp.achievementsUnlockedCount shouldBe 15
     gp.achievementsUnlockedRemoteCount shouldBe 15
   }
 
   test("Syncing achievements down and then up works") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter) // Contains 12 remote achievements
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock = gp.achievementsApi
 
     gp.unlockAchievement("achievement not remote 1")
     gp.unlockAchievement("achievement not remote 2")
     gp.unlockAchievement("achievement not remote 3")
 
-    gp.syncAchievementsDown()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncAchievementsDown(cbd.check())
+    await(waiter, 1)
+    verify(cbd, times(1)).check()
     gp.achievementsUnlockedCount shouldBe 15
     gp.achievementsUnlockedRemoteCount shouldBe 12
-    gp.syncAchievementsUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(3))
+    gp.syncAchievementsUp(cbd.check())
+    await(waiter, 3)
     verify(achievementsApiMock, times(1)).load(any[GoogleApiClient], anyBoolean())
     verify(achievementsApiMock, times(3)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(2)).check()
     gp.achievementsUnlockedCount shouldBe 15
     gp.achievementsUnlockedRemoteCount shouldBe 15
   }
@@ -143,8 +154,9 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Unlocking the same achievement multiple times has the same effect as unlocking it one time when syncing up") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter)
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock = gp.achievementsApi
 
     gp.unlockAchievement("achievement X")
@@ -152,9 +164,10 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
     gp.unlockAchievement("achievement X")
     gp.unlockAchievement("achievement X")
 
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+    await(waiter, 1)
     verify(achievementsApiMock, times(1)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(1)).check()
 
     gp.achievementsUnlockedCount shouldBe 1
     gp.achievementsUnlockedRemoteCount shouldBe 1
@@ -162,8 +175,9 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
 
   test("Submitting 100 achievements to Google Play Games are all confirmed") {
     val count = 100
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter)
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock = gp.achievementsApi
 
     for (n <- 1 to count) {
@@ -181,9 +195,10 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
       gp.achievementsUnlockedRemoteCount shouldBe 0
     }
 
-    gp.syncUp()
-    waiter.await(timeout(count * MaxCallbackResponseTimeMillis millis), org.scalatest.concurrent.AsyncAssertions.dismissals(count))
+    gp.syncUp(cbd.check())
+    await(waiter, count)
     verify(achievementsApiMock, times(count)).unlockImmediate(any[GoogleApiClient], anyString())
+    verify(cbd, times(1)).check()
 
     for (n <- 1 to count) {
       val a = s"achievement $n"
@@ -197,9 +212,10 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("When synchronizing 100 achievements of which 50 fail, then the GameProgress object reflects that") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val count = 100
     val gp = mkGameProgress_Ach(waiter, StatusOkThenError_50times)
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock = gp.achievementsApi
 
     for (n <- 1 to count) gp.unlockAchievement(s"achievement $n")
@@ -212,8 +228,8 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
       gp.achievementsUnlockedRemoteCount shouldBe 0
     }
 
-    gp.syncUp()
-    waiter.await(timeout(count * MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(count))
+    gp.syncUp(cbd.check())
+    await(waiter, count)
     verify(achievementsApiMock, times(count)).unlockImmediate(any[GoogleApiClient], anyString())
 
     var isUnlockedLocallyOnlyCount = 0
@@ -232,8 +248,9 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Incrementing 5 achievements that unlock at count 10 with some failures works as expected") {
-    val waiter = new Wtr
+    val waiter = mkWaiter()
     val gp = mkGameProgress_Ach(waiter, IncrementUnlock)
+    val cbd = mock[CallbackDummy]
     val achievementsApiMock1 = gp.achievementsApi
 
     gp.unlockAchievement("Achievement DU1")
@@ -291,10 +308,11 @@ class GameProgressAchievementsTest extends FunSuite with Matchers with BeforeAnd
       gp.achievementsUnlockedRemoteCount shouldBe 0
     }
 
-    gp.syncUp()
-    waiter.await(timeout(15 * MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(8))
+    gp.syncUp(cbd.check())
+    waiter.await(timeout(15 * MaxCallbackResponseTimeMillisAwait millis), org.scalatest.concurrent.AsyncAssertions.dismissals(8))
     verify(achievementsApiMock1, times(3)).unlockImmediate(any[GoogleApiClient], anyString())
     verify(achievementsApiMock1, times(5)).incrementImmediate(any[GoogleApiClient], anyString(), anyInt())
+    verify(cbd, times(1)).check()
 
     debug(Json.prettyPrint(gp.toJSON))
 

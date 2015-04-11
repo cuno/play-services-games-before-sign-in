@@ -4,33 +4,20 @@ import java.util.concurrent.TimeUnit
 
 import com.google.android.gms.common.api.PendingResult.BatchCallback
 import com.google.android.gms.common.api._
-import com.google.android.gms.games.leaderboard.LeaderboardVariant.{TIME_SPAN_ALL_TIME, TIME_SPAN_DAILY, TIME_SPAN_WEEKLY}
+import com.google.android.gms.games.leaderboard.LeaderboardVariant.{TIME_SPAN_DAILY, TIME_SPAN_WEEKLY}
 import com.google.android.gms.games.leaderboard.Leaderboards
 import com.google.android.gms.games.leaderboard.Leaderboards.{LoadPlayerScoreResult, SubmitScoreResult}
 import grizzled.slf4j.Logging
 import nl.cunodeboer.commons.android.googleplay.games.GooglePlayGamesProperty._
 import nl.cunodeboer.commons.android.googleplay.games.Helpers.mkGameProgress_LB
-import org.joda.time.DateTime
 import org.mockito.Matchers.{eq => is, _}
 import org.mockito.Mockito._
-import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.concurrent.AsyncAssertions.{Waiter => W}
 import org.scalatest.mock.MockitoSugar
-import org.scalatest.time.SpanSugar._
 import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
 import nl.cunodeboer.commons.android.googleplay.games.Utils.fakeSubmitted
 
-class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with AsyncAssertions with Logging {
-
-  final val AllThreeTimeSpans = Set(TIME_SPAN_ALL_TIME, TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)
-  final val DailyAndWeeklyTimeSpans = Set(TIME_SPAN_WEEKLY, TIME_SPAN_DAILY)
-  final val DailyTimeSpan = Set(TIME_SPAN_DAILY)
-
-  implicit def intTimes(i: Int) = new {
-    def times(fn: => Unit) = (1 to i) foreach (x => fn)
-  }
-
-  val MaxCallbackResponseTimeMillis = 500
+class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with myAsyncAssertions with Logging {
 
   import nl.cunodeboer.commons.android.googleplay.games.AchievementResultType._
 
@@ -91,7 +78,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("isBetterThen method of implicit class ScoreUtils works when lower is better") {
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp_lowerBetter = mkGameProgress_LB(waiter)
     import gp_lowerBetter.ScoreUtils
 
@@ -122,96 +109,6 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.isScoreAllTimeSet shouldBe true
   }
 
-  test("Score and previousScore for all three time spans have the expected initial values") {
-    val gp1 = mkGameProgress_LB()
-    gp1.isScoreAllTimeSet shouldBe false
-    gp1.isScoreWeeklySet shouldBe false
-    gp1.isScoreDailySet shouldBe false
-    gp1.isPreviousScoreAllTimeSet shouldBe false
-    gp1.isPreviousScoreWeeklySet shouldBe false
-    gp1.isPreviousScoreDailySet shouldBe false
-    gp1.scoreAllTime should be(None)
-    gp1.scoreWeekly should be(None)
-    gp1.scoreDaily should be(None)
-    gp1.updateScore(100) shouldBe AllThreeTimeSpans
-    gp1.isScoreAllTimeSet shouldBe true
-    gp1.scoreAllTime should be(Some(100))
-  }
-
-  test("updateScore only sets lower values when configured as lower is better") {
-    val gp = mkGameProgress_LB(null, StatusOk)
-    gp.updateScore(5000) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime.get shouldBe 5000
-    gp.updateScore(5000) shouldBe empty
-    gp.scoreAllTime.get shouldBe 5000
-    gp.updateScore(6000) shouldBe empty
-    gp.scoreAllTime.get shouldBe 5000
-    gp.updateScore(4999) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime.get shouldBe 4999
-    gp.updateScore(3500) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime.get shouldBe 3500
-    gp.updateScore(4000) shouldBe empty
-    gp.scoreAllTime.get shouldBe 3500
-    gp.updateScore(100) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime.get shouldBe 100
-    gp.updateScore(200) shouldBe empty
-    gp.scoreAllTime.get shouldBe 100
-    gp.updateScore(400) shouldBe empty
-    gp.scoreAllTime.get shouldBe 100
-  }
-
-  test("updateScore only sets higher values when configured as higher is better") {
-    val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
-    gp.updateScore(5000) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime shouldBe Some(5000)
-    gp.updateScore(5000) shouldBe empty
-    gp.scoreAllTime shouldBe Some(5000)
-    gp.updateScore(6000) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime shouldBe Some(6000)
-    gp.updateScore(5999) shouldBe empty
-    gp.scoreAllTime shouldBe Some(6000)
-    gp.updateScore(3500) shouldBe empty
-    gp.scoreAllTime shouldBe Some(6000)
-    gp.updateScore(6001) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime shouldBe Some(6001)
-    gp.updateScore(10000) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime shouldBe Some(10000)
-    gp.updateScore(200) shouldBe empty
-    gp.scoreAllTime shouldBe Some(10000)
-    gp.updateScore(10001) shouldBe AllThreeTimeSpans
-    gp.scoreAllTime shouldBe Some(10001)
-  }
-
-  test("The previousScore is updated only when score is updated") {
-    val gpL = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
-    val gpS = mkGameProgress_LB(null, StatusOk, LowerIsBetter)
-    // Update if higher
-    gpL.scoreAllTime shouldBe empty
-    gpL.previousScoreAllTime shouldBe empty
-    gpL.updateScore(10) shouldBe AllThreeTimeSpans // 10 | None
-    gpL.previousScoreAllTime shouldBe empty
-    gpL.updateScore(10) shouldBe empty // No update of score
-    gpL.previousScoreAllTime shouldBe empty
-    gpL.updateScore(9) shouldBe empty // No update of score
-    gpL.previousScoreAllTime shouldBe empty
-    gpL.updateScore(11) shouldBe AllThreeTimeSpans // 11 | 10
-    gpL.previousScoreAllTime should be(Some(10))
-
-    // Update if lower
-    gpS.updateScore(15) shouldBe AllThreeTimeSpans // 15 | None
-    gpS.previousScoreAllTime shouldBe empty
-    gpS.updateScore(11) shouldBe AllThreeTimeSpans // 11 | 15
-    gpS.previousScoreAllTime should be(Some(15))
-    gpS.updateScore(12) shouldBe empty // No update of score
-    gpS.previousScoreAllTime should be(Some(15))
-    gpS.updateScore(5) shouldBe AllThreeTimeSpans // 5 | 11
-    gpS.previousScoreAllTime should be(Some(11))
-    gpS.updateScore(5) shouldBe empty // No update of score
-    gpS.previousScoreAllTime should be(Some(11))
-    gpS.updateScore(4) shouldBe AllThreeTimeSpans // 4 | 5
-    gpS.previousScoreAllTime should be(Some(5))
-  }
-
   test("Updating to a better score of a wider time span also updates the encompassing scores") {
     val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
     val initialScore = Some(1000)
@@ -234,61 +131,6 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.previousScoreDaily shouldBe initialScore
   }
 
-  test("Updating a score to a value that is only better in case of a time span reset, updates the score of that time span and also of more narrow time spans") {
-    val gp = mkGameProgress_LB(null, StatusOk, HigherIsBetter)
-    val allTimeBestScore = Some(2000)
-    val dailyBestScore = Some(1500)
-    val weeklyBestScore = Some(1750)
-
-    val dt = new DateTime(gp.lbResetTimezone).withMillis(gp.currentTimeMillis())
-
-    gp.updateScore(allTimeBestScore.get)
-
-    // Same day, so no reset and update of best weekly and daily score.
-    gp.updateScore(dailyBestScore.get) shouldBe empty
-    gp.scoreAllTime shouldBe allTimeBestScore
-    gp.scoreWeekly shouldBe allTimeBestScore
-    gp.scoreDaily shouldBe allTimeBestScore
-
-    // The daily score, initially set to the same value as the all-time score, is now more than a day old. The all-time
-    // best score does no longer count as best of the day, it still stands as best of the week though.
-    gp.updateTimestampModified(ScoreDaily, dt.minusHours(25).getMillis)
-    gp.updateScore(dailyBestScore.get) shouldBe DailyTimeSpan
-    gp.scoreAllTime shouldBe allTimeBestScore
-    gp.scoreWeekly shouldBe allTimeBestScore
-    gp.scoreDaily shouldBe dailyBestScore
-    gp.previousScoreAllTime shouldBe empty
-    gp.previousScoreWeekly shouldBe empty
-    gp.previousScoreDaily shouldBe allTimeBestScore
-
-    gp.updateTimestampModified(ScoreDaily, dt.getMillis)
-
-    // Same day, so no change in best weekly score because it is still set to a better value. But the daily score should
-    // be updated to the better score.
-    gp.updateScore(weeklyBestScore.get) shouldBe DailyTimeSpan
-    gp.scoreAllTime shouldBe allTimeBestScore
-    gp.scoreWeekly shouldBe allTimeBestScore
-    gp.scoreDaily shouldBe weeklyBestScore
-
-    // The weekly score was set in the previous week, so the all-time best value does not count as best of the week any
-    // longer and should therefore be updated to the worse new score.
-    gp.updateTimestampModified(ScoreWeekly, dt.minusDays(8).getMillis)
-    gp.updateScore(weeklyBestScore.get) shouldBe DailyAndWeeklyTimeSpans
-    gp.scoreAllTime shouldBe allTimeBestScore
-    gp.scoreWeekly shouldBe weeklyBestScore
-    gp.scoreDaily shouldBe weeklyBestScore
-    gp.previousScoreAllTime shouldBe empty
-    gp.previousScoreWeekly shouldBe allTimeBestScore
-    gp.previousScoreDaily shouldBe weeklyBestScore
-
-    gp.updateTimestampModified(ScoreWeekly, dt.getMillis)
-
-    // Update the daily score to a score that is worse than the best score of that week.
-    gp.updateTimestampModified(ScoreDaily, dt.minusHours(25).getMillis)
-    gp.updateScore(weeklyBestScore.get - 10) shouldBe DailyTimeSpan
-    gp.scoreDaily shouldBe Some(weeklyBestScore.get - 10)
-  }
-
   test("Leaderboard ID is optional when no score is set") {
     val gp = mkGameProgress_LB(null, MissingID)
     gp.syncUp()
@@ -307,8 +149,9 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Synchronizing the score up only submits when it's updated later than it was submitted") {
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOk, HigherIsBetter)
+    val cbd = mock[CallbackDummy]
     val leaderboardsApiMock = gp.leaderboardsApi
 
     gp.updateScore(1234)
@@ -316,25 +159,30 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
 
     gp.isScoreAllTimeSet shouldBe true
 
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+
+    await(waiter, 1)
 
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
 
-    gp.syncUp() // Should not submit already submitted score.
+    gp.syncUp(cbd.check()) // Should not submit already submitted score.
 
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(2)).check()
 
     gp.updateScore(1235)
     Thread.sleep(10)
 
-    gp.syncUp() // Should submit updated score (can be the same value but that should not happen in practise).
+    gp.syncUp(cbd.check()) // Should submit updated score (can be the same value but that should not happen in practice).
     verify(leaderboardsApiMock, times(2)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(3)).check()
   }
 
   test("Failure synchronize the score up can be retried and still succeed") {
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOkThenError_50times)
+    val cbd = mock[CallbackDummy]
     val leaderboardsApiMock = gp.leaderboardsApi
 
     gp.updateScore(1234)
@@ -342,14 +190,16 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.isScoreAllTimeSet shouldBe true
 
     // First time should fail.
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+    await(waiter, 1)
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
 
     // Retry should succeed.
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+    await(waiter, 1)
     verify(leaderboardsApiMock, times(2)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(2)).check()
   }
 
   test("Modified and remote sync timestamp maps work") {
@@ -368,6 +218,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   test("Sync up does not submit an already submitted score") {
     implicit val gp = mkGameProgress_LB()
     val leaderboardsApiMock = gp.leaderboardsApi
+    val cbd = mock[CallbackDummy]
     val now = gp.currentTimeMillis()
 
     gp.updateScore(1234)
@@ -375,12 +226,15 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     fakeSubmitted(ScoreWeekly)(now)
     fakeSubmitted(ScoreDaily)(now)
 
-    gp.syncUp()
+    gp.syncUp(cbd.check())
     verify(leaderboardsApiMock, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
   }
 
   test("Sync up with an already submitted wider time span score will only submit the next-widest time span's better score") {
-    implicit val gp = mkGameProgress_LB()
+    val waiter = mkWaiter()
+    val cbWaiter = mkWaiter()
+    implicit val gp = mkGameProgress_LB(waiter)
     val leaderboardsApiMock = gp.leaderboardsApi
 
     val scoreAllTime = 1000L
@@ -393,7 +247,12 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.timestampSubmitted get ScoreWeekly shouldBe empty
     gp.timestampSubmitted get ScoreDaily shouldBe empty
 
-    gp.syncUp()
+    gp.syncUp {
+      cbWaiter.dismiss()
+    }
+
+    await(cbWaiter, 1)
+    await(waiter, 1)
 
     // All-time score should be submitted.
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreAllTime))
@@ -407,7 +266,11 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     // Set better weekly score.
     gp.updateScore(999)
     fakeSubmitted(ScoreAllTime)(unchangedAllTimeTimestamp)
-    gp.syncUp()
+    gp.syncUp {
+      cbWaiter.dismiss()
+    }
+    await(cbWaiter, 1)
+    await(waiter, 1)
 
     // Weekly score should be submitted.
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreWeekly))
@@ -420,7 +283,11 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     gp.updateScore(scoreDaily)
     fakeSubmitted(ScoreAllTime)(unchangedAllTimeTimestamp)
     fakeSubmitted(ScoreWeekly)(unchangedWeeklyTimestamp)
-    gp.syncUp()
+    gp.syncUp {
+      cbWaiter.dismiss()
+    }
+    await(cbWaiter, 1)
+    await(waiter, 1)
 
     // Daily score should be submitted.
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), is(scoreDaily))
@@ -430,46 +297,54 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
   }
 
   test("Sync up submits a score when is has not been submitted yet") {
-    val waiter = new W
+    val waiter = mkWaiter()
     implicit val gp = mkGameProgress_LB(waiter)
     val leaderboardsApiMock = gp.leaderboardsApi
+    val cbd = mock[CallbackDummy]
     val now = gp.currentTimeMillis()
 
     gp.updateScore(1234)
 
     fakeSubmitted(ScoreAllTime)(now)
 
-    gp.syncUp()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncUp(cbd.check())
+    await(waiter, 1)
     verify(leaderboardsApiMock, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
   }
 
   test("Sync up does not submit a None score") {
     implicit val gp = mkGameProgress_LB()
     val leaderboardsApiMock = gp.leaderboardsApi
+    val cbd = mock[CallbackDummy]
     val now = gp.currentTimeMillis()
 
     gp.isScoreAllTimeSet shouldBe false
 
     fakeSubmitted(ScoreAllTime)(now)
 
-    gp.syncUp()
+    gp.syncUp(cbd.check())
     verify(leaderboardsApiMock, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
   }
 
   test("Bi-directional sync score with worse local score does not submit to remote") {
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
-    val waiter = new W
+    val waiter = mkWaiter()
+    val cbWaiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOk)
 
     // Set worse local score than remote score of 10 (all three time spans).
     gp.updateScore(123)
 
     // Score found in public leaderboard, no need so look in the social leaderboard.
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncScore {
+      cbWaiter.dismiss()
+    }
+    await(cbWaiter, 1)
+    await(waiter, 3)
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), anyInt(), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
@@ -480,17 +355,23 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
-    val waiter = new W
+    val waiter = mkWaiter()
+    val cbWaiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime)
 
     // Set worse local score than remote score of 10 (all three time spans).
     gp.updateScore(123)
 
-    withClue("timeout occurred:") {
-      gp.syncScore() shouldBe true
-    }
+    //    withClue("timeout occurred:") {
+    //      gp.syncScore() shouldBe true
+    //    }
 
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(4))
+    gp.syncScore {
+      cbWaiter.dismiss()
+    }
+    await(cbWaiter, 1)
+
+    await(waiter, 4)
 
     // All three time spans should be tried.
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
@@ -512,15 +393,18 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOk)
+    val cbd = mock[CallbackDummy]
 
     // Set better local score than remote score of 8 (all three time spans).
     gp.updateScore(8)
 
     // Score found in public leaderboard, no need to look in the social leaderboard.
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(4))
+    gp.syncScore {
+      cbd.check()
+    }
+    await(waiter, 4)
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_PUBLIC))
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_PUBLIC))
@@ -528,6 +412,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
     gp.scoreAllTime shouldBe Some(8)
   }
 
@@ -535,15 +420,16 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOkAndFirstGetScoreReturnsNullForTimeStampAlltime)
+    val cbd = mock[CallbackDummy]
 
     // Set better local score than remote score of 7 (all three time spans).
     gp.updateScore(7)
 
 
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(5))
+    gp.syncScore(cbd.check())
+    await(waiter, 5)
 
     // All three time spans should be tried.
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
@@ -555,6 +441,7 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_WEEKLY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_DAILY), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, times(1)).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, times(1)).check()
     gp.scoreAllTime shouldBe Some(7)
   }
 
@@ -562,18 +449,20 @@ class GameProgressLeaderboardsTest extends FunSuite with Matchers with BeforeAnd
     import com.google.android.gms.games.leaderboard.LeaderboardVariant.{COLLECTION_PUBLIC, COLLECTION_SOCIAL, TIME_SPAN_ALL_TIME}
     import org.mockito.Matchers.{eq => is}
 
-    val waiter = new W
+    val waiter = mkWaiter()
     val gp = mkGameProgress_LB(waiter, StatusOkThenError_50times)
+    val cbd = mock[CallbackDummy]
 
     // Set better local score than remote score of 10 (all three time spans).
     gp.updateScore(8)
 
     // Score found in public leaderboard, no need so look in the social leaderboard.
-    gp.syncScore()
-    waiter.await(timeout(MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(1))
+    gp.syncScore(cbd.check())
+    await(waiter, 1)
     verify(gp.leaderboardsApi, times(1)).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_PUBLIC))
     verify(gp.leaderboardsApi, never).loadCurrentPlayerLeaderboardScore(any[GoogleApiClient], anyString(), is(TIME_SPAN_ALL_TIME), is(COLLECTION_SOCIAL))
     verify(gp.leaderboardsApi, never).submitScoreImmediate(any[GoogleApiClient], anyString(), anyLong())
+    verify(cbd, never).check() // Should not continue after a network error
     gp.scoreAllTime shouldBe Some(8)
   }
 

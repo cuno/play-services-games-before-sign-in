@@ -6,19 +6,13 @@ import nl.cunodeboer.commons.android.googleplay.games.AchievementResultType._
 import nl.cunodeboer.commons.android.googleplay.games.Globals._
 import nl.cunodeboer.commons.android.googleplay.games.GooglePlayGamesProperty._
 import nl.cunodeboer.commons.android.googleplay.games.Helpers.mkGameProgress_Ach
-import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.mock.MockitoSugar
-import org.scalatest.time.SpanSugar._
 import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
 
-class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with AsyncAssertions with Logging {
-
-  // Run a code block n times.
-  implicit def intTimes(n: Int) = new {
-    def times(fn: => Unit) = (1 to n) foreach (x => fn)
-  }
+class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEach with MockitoSugar with myAsyncAssertions with Logging {
 
   import MeasureType._
+  import nl.cunodeboer.commons.android.googleplay.games.Utils.intTimes
 
   val gpSerializedValid =
     """{
@@ -92,7 +86,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
   }
 
   test("JSON serializing and de-serializing works") {
-    val waiter = new org.scalatest.concurrent.AsyncAssertions.Waiter
+    val waiter = mkWaiter()
     val gpSerialize = mkGameProgress_Ach(waiter, IncrementUnlock, HigherIsBetter)
 
     gpSerialize.incAchievement("Achievement E1", 5)
@@ -117,7 +111,7 @@ class GameProgressJsonTest extends FunSuite with Matchers with BeforeAndAfterEac
     gamesLostCount times gpSerialize.registerLoss()
 
     gpSerialize.syncUp()
-    waiter.await(timeout(3 * MaxCallbackResponseTimeMillis + 1000 millis), org.scalatest.concurrent.AsyncAssertions.dismissals(6))
+    await(waiter, 6)
 
     val json = gpSerialize.toString
 

@@ -16,24 +16,50 @@ import com.google.android.gms.games.leaderboard.LeaderboardVariant._
 import com.google.android.gms.games.leaderboard.Leaderboards.{LoadPlayerScoreResult, SubmitScoreResult}
 import com.google.android.gms.games.leaderboard.{LeaderboardScore, Leaderboards}
 import grizzled.slf4j.Logging
+import nl.cunodeboer.commons.android.googleplay.games.Globals._
 import org.joda.time.DateTime
 import org.mockito.AdditionalMatchers.not
 import org.mockito.Matchers.{eq => is, _}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
+import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.concurrent.AsyncAssertions.Waiter
 import org.scalatest.mock
 
 object Globals {
   val rnd = new scala.util.Random
   val MaxCallbackResponseTimeMillis = 500
+  val MaxCallbackResponseTimeMillisAwait = 2500
+}
+
+/**
+ * For counting callback invocations with Mockito.
+ */
+class CallbackDummy {
+  def check() = {}
 }
 
 object Utils {
   def fakeSubmitted(timeSpan: GooglePlayGamesProperty.Value)(at: Long)(implicit gp: GameProgress) {
     gp.updateTimestampModified(timeSpan, at - 100)
     gp.updateTimestampSubmitted(timeSpan, at)
+  }
+
+  implicit def intTimes(i: Int) = new {
+    def times(fn: => Unit) = (1 to i) foreach (x => fn)
+  }
+}
+
+trait myAsyncAssertions extends AsyncAssertions {
+
+  import org.scalatest.concurrent.AsyncAssertions
+  import org.scalatest.time.SpanSugar._
+
+  def mkWaiter() = new AsyncAssertions.Waiter
+
+  def await(waiter: AsyncAssertions.Waiter, dismissals: Int = 1) {
+    waiter.await(timeout(MaxCallbackResponseTimeMillisAwait millis), org.scalatest.concurrent.AsyncAssertions.dismissals(dismissals))
   }
 }
 
@@ -87,7 +113,11 @@ class FPR_LB_Load(mockedLoadPlayerScoreResult: Leaderboards.LoadPlayerScoreResul
 
   override def await(): LoadPlayerScoreResult = ???
 
-  override def await(p1: Long, p2: TimeUnit): LoadPlayerScoreResult = ???
+  override def await(p1: Long, p2: TimeUnit): LoadPlayerScoreResult = {
+    Thread.sleep(50)
+    waiter.dismiss()
+    mockedLoadPlayerScoreResult
+  }
 
   override def cancel(): Unit = ???
 
