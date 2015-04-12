@@ -7,14 +7,14 @@ import nl.cunodeboer.commons.android.googleplay.games.AchievementResultType._
 import nl.cunodeboer.commons.android.googleplay.games.GooglePlayGamesProperty._
 import nl.cunodeboer.commons.android.googleplay.games.Helpers._
 import nl.cunodeboer.commons.android.googleplay.games.MeasureType._
-import org.joda.time.DateTime
+import org.joda.time.{DateTimeConstants, DateTime}
 import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{BeforeAndAfterEach, FunSuite, Matchers}
 
 /* Test GameProgress with fake local time set to half a second before the end of a Saturday: 24:00 PST. */
 class TestGameProgressEndOfSaturday(apiClient: GoogleApiClient, lowerIsBetter: Boolean, initJSON: Option[String] = None, leaderBoardId: Option[String] = None) extends GameProgress(apiClient, lowerIsBetter, initJSON, leaderBoardId) {
-  val lastSecondOfSaturdayTimestamp = new DateTime(lbResetTimezone).withWeekOfWeekyear(6).withDayOfWeek(6).withHourOfDay(23).withMinuteOfHour(59).withSecondOfMinute(59).withMillisOfSecond(500).getMillis
+  val lastSecondOfSaturdayTimestamp = new DateTime(lbResetTimezone).withWeekOfWeekyear(6).withDayOfWeek(DateTimeConstants.SATURDAY).withHourOfDay(23).withMinuteOfHour(59).withSecondOfMinute(59).withMillisOfSecond(500).getMillis
 
   override def init() {
     val realStartTimestamp = System.currentTimeMillis()
@@ -24,7 +24,7 @@ class TestGameProgressEndOfSaturday(apiClient: GoogleApiClient, lowerIsBetter: B
 
 /* Test GameProgress with fake local time set to half a second before the end of a wednesday: 24:00 PST. */
 class TestGameProgressEndOfWednesday(apiClient: GoogleApiClient, lowerIsBetter: Boolean, initJSON: Option[String] = None, leaderBoardId: Option[String] = None) extends GameProgress(apiClient, lowerIsBetter, initJSON, leaderBoardId) {
-  val lastSecondOfWednesdayTimestamp = new DateTime(lbResetTimezone).withWeekOfWeekyear(6).withDayOfWeek(3).withHourOfDay(23).withMinuteOfHour(59).withSecondOfMinute(59).withMillisOfSecond(500).getMillis
+  val lastSecondOfWednesdayTimestamp = new DateTime(lbResetTimezone).withWeekOfWeekyear(6).withDayOfWeek(DateTimeConstants.WEDNESDAY).withHourOfDay(23).withMinuteOfHour(59).withSecondOfMinute(59).withMillisOfSecond(500).getMillis
 
   override def init() {
     val realStartTimestamp = System.currentTimeMillis()

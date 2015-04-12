@@ -1,5 +1,6 @@
 package nl.cunodeboer.commons.android.googleplay.games
 
+import java.util.{Calendar}
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import android.os.AsyncTask
@@ -14,7 +15,7 @@ import com.google.android.gms.games.leaderboard.Leaderboards.SubmitScoreResult
 import com.google.android.gms.games.leaderboard.{LeaderboardScore, Leaderboards}
 import grizzled.slf4j.Logging
 import nl.cunodeboer.commons.android.googleplay.games.GooglePlayGamesProperty._
-import org.joda.time.{DateTime, DateTimeConstants, DateTimeZone}
+import org.joda.time.{DateTime, DateTimeZone}
 import play.api.libs.json.Json
 import play.api.libs.json.Json._
 
@@ -94,12 +95,24 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
    * Virtual methods for type Long to determine if a timestamps is in the current weekly or daily time span.
    * Google Play Game Services daily leaderboards reset at midnight PST every day, and weekly leaderboards reset at Saturday midnight PST.
    * @see https://developers.google.com/games/services/common/concepts/leaderboards
-   * @param timestamp the left hand side optional long
+   * @param timestamp the left hand side optional long, the timestamp to compare
    */
   implicit class TimeStampUtils(val timestamp: Option[Long]) {
     def isNotInDailyTimespan = timestamp.isEmpty || new DateTime(currentTimeMillis(), lbResetTimezone).getDayOfYear != new DateTime(timestamp.get, lbResetTimezone).getDayOfYear
 
-    def isNotInWeeklyTimespan = timestamp.isEmpty || new DateTime(currentTimeMillis() + DateTimeConstants.MILLIS_PER_DAY, lbResetTimezone).getWeekOfWeekyear != new DateTime(timestamp.get, lbResetTimezone).getWeekOfWeekyear
+    /*
+      Joda-Time uses the ISO standard Monday to Sunday week, we need Sunday to Saturday.
+     */
+    def isNotInWeeklyTimespan = timestamp match {
+      case Some(timestampThen) =>
+        val cal = Calendar.getInstance(lbResetTimezone.toTimeZone)
+        cal.setFirstDayOfWeek(Calendar.SUNDAY)
+        cal.setTimeInMillis(timestampThen)
+        val weekNoThen = cal.get(Calendar.WEEK_OF_YEAR)
+        cal.setTimeInMillis(currentTimeMillis())
+        weekNoThen != cal.get(Calendar.WEEK_OF_YEAR)
+      case None => true
+    }
   }
 
   /**
@@ -115,9 +128,9 @@ class GameProgress(googleApiClient: GoogleApiClient, val smallerIsBetter: Boolea
     def isBetterThen(rhs: Option[Long]) = if (smallerIsBetter) lhs < rhs.getOrElse(Long.MaxValue) else lhs > rhs.getOrElse(Long.MinValue)
   }
 
-  def leaderboardsApi = _leaderboardsApi
+  protected[commons] def leaderboardsApi = _leaderboardsApi
 
-  def achievementsApi = _achievementsApi
+  protected[commons] def achievementsApi = _achievementsApi
 
   initJSON match {
     case Some(jsonString) =>
